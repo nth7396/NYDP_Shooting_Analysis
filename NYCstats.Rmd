@@ -1,0 +1,171 @@
+---
+title: "NYCShootingStats"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-02-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Libraries
+
+Remember to install and load these R packages:
+```{r libraries, echo=TRUE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(readr)
+library(seasonal)
+library(fpp2)
+library(dplyr)
+library(scales)
+theme_set(theme_bw())
+```
+
+## Data Preparation
+### Import Data
+```{r import, echo=TRUE}
+#----import data----
+rows <- read.csv("NYPD_Shooting_Incident_Data__Historic_.csv",stringsAsFactors=TRUE)
+```
+### Data Cleaning
+Data summary
+```{r sum, echo=TRUE}
+#----import data----
+summary(rows)
+str(rows)
+```
+
+First step is to remove duplication from the dataset.
+```{r prep1, echo=TRUE}
+#----remove duplication----
+crime_no_dup<-filter(distinct(rows,INCIDENT_KEY,.keep_all=TRUE))
+```
+
+In order to visualize the frequency of shooting incidents throughout the day, we have to aggregate the data into numbers of shooting per two-hour timeslot. 
+
+```{r prep2, echo=TRUE}
+#---data prep for shootings by time of day---
+crime_clean<-crime_no_dup %>%
+  mutate(time_group=cut(as.numeric(OCCUR_TIME),
+                        breaks=c(0,2*60,4*60,6*60,8*60,10*10,12*60,14*60,16*60,18*60,20*60,22*60,23*60+59),
+                        labels=c("00-02","02-04","04-06","06-08","08-10","10-12","12-14","14-16","16-18","18-20","20-22","22-00"),
+                        include.lowest = TRUE))
+
+crime_clean %>% 
+  select(time_group) %>% 
+  group_by(time_group) %>% 
+  summarize(count=n())
+```
+For our second visualization, we will look at the dataset on a more macro scale. The frequency of shooting incidents from 2006 to 2022, grouped by days.
+
+```{r prep3, echo=TRUE}
+#---data prep for shootings by time of day---
+df_yearly <- crime_clean %>%
+  mutate(Date = as.Date(OCCUR_DATE, "%m/%d/%Y")) %>%
+  group_by(Date) %>%
+  summarize(count = n()) %>%
+  arrange(Date)
+```
+## Data Visualization
+
+```{r visual, echo=TRUE}
+#----data visualization for shootings by time of day----
+crime_clean %>%
+  ggplot(aes(x = time_group)) +
+  geom_bar(fill = "#756bb1") +
+  labs(x = "Time of day", y= "Number of shootings", title = "Shootings by time of day")
+```
+
+
+Ones can observe that within a daily timeframe, shooting incidents tend to occur at a higher frequency during night time (from 6PM til 6AM) rather than day time (from 6AM til 6PM).
+
+```{r visual2, echo=TRUE}
+#----data visualization for shootings by time of day----
+plot <- ggplot(df_yearly, aes(x = Date, y = count)) +
+  geom_line(color = "#F2CA27", linewidth = 0.25) +
+  geom_smooth(color = "#1A1A1A") +
+  # fte_theme() +
+  scale_x_date(breaks = date_breaks("1 year"), labels = date_format("%Y")) +
+  labs(x = "Year", y = "Number of Incidents", title = "Shooting Incidents in NYC from 2006 – 2021")
+plot
+```
+
+
+Looking at the graph, ones can see the frequency of shootings incidents in NYC throughout the years. However because of its scale, this visualization does not appear to highlight the trends in the most clear-cut way. We can only see a relatively minor downward trend until a dramatic jump in frequency in 2019-2020. As a result, we will make another series of visualizations in order to illuminate these trends.
+
+```{r prep4, echo=TRUE}
+data_new <- df_yearly                                   # Duplicate data
+data_new$year_month <- floor_date(data_new$Date,  # Create year-month column
+                                   "month")
+
+data_aggr <- data_new %>% # Aggregate data into monthly
+  group_by(year_month) %>% 
+  dplyr::summarize(count = sum(count)) %>% 
+  as.data.frame()
+
+data_aggr3 <- data_aggr %>% 
+  filter(year_month<"2020-01-01")
+
+data_aggr4 <- data_aggr %>% 
+  filter(year_month<"2021-01-01")
+
+shootings <- ts(data_aggr3$count, frequency = 12, start = 2006)
+shootings2 <- ts(data_aggr4$count, frequency = 12, start = 2006)
+shootingsTotal <- ts(data_aggr$count, frequency = 12, start = 2006)
+
+forecast <- forecast(auto.arima(shootings), h = 12)
+```
+
+```{r visual3, echo=TRUE}
+autoplot(decompose(shootingsTotal)) #actual data for all of the dataset
+```
+
+
+The above visualizations clear illustrate the trend over the years. Specifically, from 2006 until 2012 the frequency of shooting incidents in NYC remained relatively stable at 125 per day. From around 2012 until 2016, there was a dramatic decrease from 125 incidents per day down to 60 incidents per day. The trend levelled and was stable from 2016 until 2020, when there was a sharp proliferation to almost 250 incidents per day. 
+Within the timeframe of a year, we can also observe the seasonal fluctuation: the frequency of shootings tended to increase during the summer months while decreased in the winter months. 
+The visualizations helped us look at the dataset more comprehensively, exploring daily, seasonal, and overall trends over the years.
+
+
+## Data Modelling
+
+
+In this section, we will look at how data scientist before the 2020 dramatic increase in shooting frequency might have forecasted the trend, using data until 2019. 
+First, let's look at the data from 2006 until the end of 2019. 
+
+
+```{r visual4, echo=TRUE}
+autoplot(decompose(shootings)) #actual data for all of the dataset
+```
+
+
+Using the above data, data scientist might have employed a time-series forecasting technique called AMIRA. 
+
+
+
+```{r visual5, echo=TRUE}
+autoplot(forecast(auto.arima(shootings), h = 12), PI = FALSE) #forecasting for 2020
+```
+
+
+## Data Analysis and Conclusion
+
+Data modelling using historical data basically relied on what happened in the past in order to tell the future. This extrapolation approach did not account for unexpected global events such as Covid-19. The pandemic caused the city to lock down and in one way or another dramatically impacted the socio-economic situations of its citizens. This led to higher frequency of crimes such as theft; the phenomenon measured by number of shooting incidents. As a consequence, time-series forecasting techniques such as ARIMA should only be used with great caution, given that there are limited external factors influencing the current situation. 
+
+
+
+```{r visual6, echo=TRUE}
+plot(shootings2,main = "Actual Shooting Incidents Data for 2020",ylab= "Number of incidents",
+     xlab = "Year") #actual data for 2020
+```
+
+```{r visual7, echo=TRUE}
+plot(forecast,main = "Shooting Incidents Forecast for 2020",ylab= "Number of incidents",
+     xlab = "Year") #forecast for 2020
+```
+
+
+Compare and contrast the two visualizations above, ones might consider that the data scientist's forecast had a recency bias, where it assumed that recent events (old data) will continue to occur in the future. This led to a profound incorrect prediction for the 2020 frequency of shooting incidents in NYC.
